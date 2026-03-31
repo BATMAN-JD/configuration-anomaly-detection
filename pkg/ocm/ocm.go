@@ -47,6 +47,7 @@ type Client interface {
 	IsAccessProtected(cluster *cmv1.Cluster) (bool, error)
 	GetClusterHypershiftConfig(cluster *cmv1.Cluster) (*cmv1.HypershiftConfig, error)
 	GetOrganizationID(clusterID string) (string, error)
+	GetClusterInfo(identifier string) (*cmv1.Cluster, error)
 	GetDynatraceURL(clusterID string) (string, error)
 }
 
