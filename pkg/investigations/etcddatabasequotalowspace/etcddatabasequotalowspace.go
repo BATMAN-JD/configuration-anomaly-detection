@@ -578,8 +578,18 @@ func getEtcdctlContainerImage(pod *corev1.Pod) (string, error) {
 
 // buildDynatraceLogsURL constructs a Dynatrace UI URL with a DQL query for the analysis job logs
 func buildDynatraceLogsURL(baseURL, namespace, jobId string) string {
+	// Use current UTC time for durable link
+	now := time.Now().UTC()
+	fromTime := now.Add(-1 * time.Hour)
+
+	// Format timestamps in milliseconds since epoch for Dynatrace
+	fromMs := fromTime.UnixMilli()
+	toMs := now.UnixMilli()
+
 	query := fmt.Sprintf(
-		`fetch logs, from:now()-1h | filter matchesValue(event.type, "LOG") and (matchesValue(k8s.namespace.name, "%s")) and (matchesValue(k8s.pod.name, "%s*")) | sort timestamp desc | limit 1000`,
+		`fetch logs, from:%d, to:%d | filter matchesValue(event.type, "LOG") and (matchesValue(k8s.namespace.name, "%s")) and (matchesValue(k8s.pod.name, "%s*")) | sort timestamp desc | limit 1000`,
+		fromMs,
+		toMs,
 		namespace,
 		jobId,
 	)
@@ -588,9 +598,9 @@ func buildDynatraceLogsURL(baseURL, namespace, jobId string) string {
 	// The order of fields matters for some Dynatrace UI versions
 	state := map[string]interface{}{
 		"version": 2,
-		"dt.timeframe": map[string]string{
-			"from": "now()-30m",
-			"to":   "now()",
+		"dt.timeframe": map[string]int64{
+			"from": fromMs,
+			"to":   toMs,
 		},
 		"tableConfig": map[string]interface{}{
 			"columns": []string{"timestamp", "status", "Log message"},
