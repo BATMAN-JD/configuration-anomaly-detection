@@ -3,7 +3,6 @@ package controller
 import (
 	"github.com/openshift/configuration-anomaly-detection/pkg/investigations/investigation"
 	"github.com/openshift/configuration-anomaly-detection/pkg/logging"
-	"github.com/openshift/configuration-anomaly-detection/pkg/pagerduty"
 )
 
 // incidentNotifier abstracts PagerDuty incident operations so that
@@ -11,17 +10,22 @@ import (
 // nil-checking a *pagerduty.SdkClient.
 type incidentNotifier interface {
 	AddNote(note string) error
+	Escalate() error
 	EscalateWithNote(note string) error
+	// HasEscalated reports whether this incident has already been escalated
+	// by any means (a matched investigation's own action, a direct call, or
+	// Escalate/EscalateWithNote below) so callers can avoid escalating twice.
+	HasEscalated() bool
 	AttachToBuilder(builder investigation.ResourceBuilder)
 	HasPagerDuty() bool
 }
 
 // pdIncidentNotifier wraps a real PagerDuty client.
 type pdIncidentNotifier struct {
-	client *pagerduty.SdkClient
+	client *trackingPDClient
 }
 
-func newPDIncidentNotifier(client *pagerduty.SdkClient) incidentNotifier {
+func newPDIncidentNotifier(client *trackingPDClient) incidentNotifier {
 	return &pdIncidentNotifier{client: client}
 }
 
@@ -29,8 +33,16 @@ func (n *pdIncidentNotifier) AddNote(note string) error {
 	return n.client.AddNote(note)
 }
 
+func (n *pdIncidentNotifier) Escalate() error {
+	return n.client.EscalateIncident()
+}
+
 func (n *pdIncidentNotifier) EscalateWithNote(note string) error {
 	return n.client.EscalateIncidentWithNote(note)
+}
+
+func (n *pdIncidentNotifier) HasEscalated() bool {
+	return n.client.HasEscalated()
 }
 
 func (n *pdIncidentNotifier) AttachToBuilder(builder investigation.ResourceBuilder) {
@@ -53,9 +65,20 @@ func (n *noopIncidentNotifier) AddNote(note string) error {
 	return nil
 }
 
+func (n *noopIncidentNotifier) Escalate() error {
+	logging.Infof("Skipping PD escalation (manual mode)")
+	return nil
+}
+
 func (n *noopIncidentNotifier) EscalateWithNote(note string) error {
 	logging.Infof("Skipping PD escalation (manual mode)")
 	return nil
+}
+
+// HasEscalated always reports false: manual mode has no PagerDuty incident to
+// track escalation state for, and nothing in this controller relies on it.
+func (n *noopIncidentNotifier) HasEscalated() bool {
+	return false
 }
 
 func (n *noopIncidentNotifier) AttachToBuilder(_ investigation.ResourceBuilder) {}

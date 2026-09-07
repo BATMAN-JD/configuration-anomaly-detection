@@ -20,6 +20,10 @@ import (
 	"github.com/openshift/configuration-anomaly-detection/pkg/pagerduty"
 )
 
+// Name is the investigation's registered name, used to reference it from
+// investigation-entry configs (e.g. the AI-fallback chain in pagerduty.go).
+const Name = "aiassisted"
+
 type Investigation struct {
 	AIConfig *config.AIAgentConfig
 }
@@ -248,5 +252,5 @@ func (c *Investigation) Run(rb investigation.ResourceBuilder) (investigation.Inv
 }
 
 func (c *Investigation) Name() string {
-	return "aiassisted"
+	return Name
 }

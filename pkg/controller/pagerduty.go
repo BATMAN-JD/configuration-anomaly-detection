@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/openshift/configuration-anomaly-detection/pkg/config"
+	"github.com/openshift/configuration-anomaly-detection/pkg/investigations/aiassisted"
 	"github.com/openshift/configuration-anomaly-detection/pkg/investigations/investigation"
 	"github.com/openshift/configuration-anomaly-detection/pkg/logging"
 	"github.com/openshift/configuration-anomaly-detection/pkg/ocm"
@@ -18,7 +19,7 @@ import (
 type PagerDutyController struct {
 	config   CommonConfig
 	pd       PagerDutyConfig
-	pdClient *pagerduty.SdkClient
+	pdClient pagerduty.Client
 	investigationRunner
 }
 
@@ -65,7 +66,7 @@ func (c *PagerDutyController) Investigate(ctx context.Context) error {
 			AlertTitle: "aiassisted-fallback",
 			Investigations: []config.InvestigationEntry{
 				{Name: "precheck"},
-				{Name: "aiassisted", When: &config.FilterNode{
+				{Name: aiassisted.Name, When: &config.FilterNode{
 					Field: config.FieldHCP, Operator: config.OperatorIn, Values: []string{"false"},
 				}},
 			},
@@ -80,7 +81,13 @@ func (c *PagerDutyController) Investigate(ctx context.Context) error {
 		}
 	}
 
-	if escErr := c.pdClient.EscalateIncident(); escErr != nil {
+	// Nothing above escalated this incident yet (e.g. the AI-fallback chain
+	// was skipped entirely, or precheck/aiassisted didn't escalate on their
+	// own): issue exactly one generic escalation now.
+	if c.notifier.HasEscalated() {
+		return nil
+	}
+	if escErr := c.notifier.Escalate(); escErr != nil {
 		return fmt.Errorf("could not escalate unsupported alert: %w", escErr)
 	}
 	return nil

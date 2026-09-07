@@ -243,20 +243,25 @@ func NewController(opts ControllerOptions, deps *Dependencies) (Controller, erro
 			return nil, fmt.Errorf("could not initialize pagerduty client: %w", err)
 		}
 
+		// Shared across the executor, the notifier, and every investigation's
+		// Resources.PdClient, so an escalation issued through any of those
+		// paths is visible to the others via HasEscalated().
+		trackedPDClient := newTrackingPDClient(pdClient)
+
 		// Initialize logger early (we'll update with cluster ID later)
 		logger := logging.InitLogger(opts.Common.LogLevel, opts.Common.Identifier, "")
 
 		return &PagerDutyController{
 			config:   opts.Common,
 			pd:       *opts.Pd,
-			pdClient: pdClient,
+			pdClient: trackedPDClient,
 			investigationRunner: investigationRunner{
 				ocmClient:    deps.OCMClient,
 				bpClient:     deps.BackplaneClient,
-				executor:     executor.NewWebhookExecutor(deps.OCMClient, pdClient, deps.BackplaneClient, logger),
+				executor:     executor.NewWebhookExecutor(deps.OCMClient, trackedPDClient, deps.BackplaneClient, logger),
 				logger:       logger,
 				dependencies: deps,
-				notifier:     newPDIncidentNotifier(pdClient),
+				notifier:     newPDIncidentNotifier(trackedPDClient),
 			},
 		}, nil
 	}
