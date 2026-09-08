@@ -245,7 +245,7 @@ func NewController(opts ControllerOptions, deps *Dependencies) (Controller, erro
 
 		// Shared across the executor, the notifier, and every investigation's
 		// Resources.PdClient, so an escalation issued through any of those
-		// paths is visible to the others via HasEscalated().
+		// paths de-duplicates against the others.
 		trackedPDClient := newTrackingPDClient(pdClient)
 
 		// Initialize logger early (we'll update with cluster ID later)
@@ -543,6 +543,8 @@ func handleCADFailure(err error, rb investigation.ResourceBuilder, notifier inci
 		notes = "🚨 CAD investigation failed prior to resource initialization, CAD team has been notified. Please investigate manually. 🚨"
 	}
 
+	// If this incident was already escalated, trackingPDClient degrades this
+	// to a plain note instead of a real second escalation.
 	if escErr := notifier.EscalateWithNote(notes); escErr != nil {
 		logging.Errorf("Failed to escalate notes to PagerDuty: %v", escErr)
 	} else {

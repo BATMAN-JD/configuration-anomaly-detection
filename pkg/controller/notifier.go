@@ -7,15 +7,11 @@ import (
 
 // incidentNotifier abstracts PagerDuty incident operations so that
 // manual (non-PD) runs use a no-op implementation instead of
-// nil-checking a *pagerduty.SdkClient.
+// nil-checking a *trackingPDClient.
 type incidentNotifier interface {
 	AddNote(note string) error
 	Escalate() error
 	EscalateWithNote(note string) error
-	// HasEscalated reports whether this incident has already been escalated
-	// by any means (a matched investigation's own action, a direct call, or
-	// Escalate/EscalateWithNote below) so callers can avoid escalating twice.
-	HasEscalated() bool
 	AttachToBuilder(builder investigation.ResourceBuilder)
 	HasPagerDuty() bool
 }
@@ -39,10 +35,6 @@ func (n *pdIncidentNotifier) Escalate() error {
 
 func (n *pdIncidentNotifier) EscalateWithNote(note string) error {
 	return n.client.EscalateIncidentWithNote(note)
-}
-
-func (n *pdIncidentNotifier) HasEscalated() bool {
-	return n.client.HasEscalated()
 }
 
 func (n *pdIncidentNotifier) AttachToBuilder(builder investigation.ResourceBuilder) {
@@ -71,14 +63,8 @@ func (n *noopIncidentNotifier) Escalate() error {
 }
 
 func (n *noopIncidentNotifier) EscalateWithNote(note string) error {
-	logging.Infof("Skipping PD escalation (manual mode)")
+	logging.Infof("Skipping PD escalation (manual mode): %s", note)
 	return nil
-}
-
-// HasEscalated always reports false: manual mode has no PagerDuty incident to
-// track escalation state for, and nothing in this controller relies on it.
-func (n *noopIncidentNotifier) HasEscalated() bool {
-	return false
 }
 
 func (n *noopIncidentNotifier) AttachToBuilder(_ investigation.ResourceBuilder) {}

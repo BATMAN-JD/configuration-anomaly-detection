@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/openshift/configuration-anomaly-detection/pkg/investigations/investigation"
 	pdmock "github.com/openshift/configuration-anomaly-detection/pkg/pagerduty/mock"
 )
 
@@ -55,16 +56,75 @@ func TestTrackingPDClient(t *testing.T) {
 		assert.False(t, tracked.HasEscalated())
 	})
 
-	t.Run("second escalation attempt is still visible as already escalated", func(t *testing.T) {
+	t.Run("a second EscalateIncident call never reaches the real client", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
 		mockClient := pdmock.NewMockClient(ctrl)
+		// No .Times()/.AnyTimes(): gomock's default expectation of exactly
+		// one call means a second real EscalateIncident call fails the test.
 		mockClient.EXPECT().EscalateIncident().Return(nil)
 
 		tracked := newTrackingPDClient(mockClient)
 		require.NoError(t, tracked.EscalateIncident())
-
-		// Simulates pagerduty.go's fallback check: a caller that consults
-		// HasEscalated() first must not issue a second EscalateIncident call.
+		require.NoError(t, tracked.EscalateIncident())
 		assert.True(t, tracked.HasEscalated())
 	})
+
+	t.Run("EscalateIncidentWithNote degrades to a note once already escalated", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mockClient := pdmock.NewMockClient(ctrl)
+		mockClient.EXPECT().EscalateIncident().Return(nil)
+		mockClient.EXPECT().AddNote("still relevant context").Return(nil)
+
+		tracked := newTrackingPDClient(mockClient)
+		require.NoError(t, tracked.EscalateIncident())
+		// No EscalateIncidentWithNote expectation set: if this fell through
+		// to the real client instead of degrading to AddNote, gomock fails.
+		require.NoError(t, tracked.EscalateIncidentWithNote("still relevant context"))
+	})
+
+	t.Run("a failed escalation allows a later attempt to actually retry", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mockClient := pdmock.NewMockClient(ctrl)
+		gomock.InOrder(
+			mockClient.EXPECT().EscalateIncident().Return(errors.New("pagerduty unavailable")),
+			mockClient.EXPECT().EscalateIncident().Return(nil),
+		)
+
+		tracked := newTrackingPDClient(mockClient)
+		assert.Error(t, tracked.EscalateIncident())
+		assert.False(t, tracked.HasEscalated())
+
+		require.NoError(t, tracked.EscalateIncident())
+		assert.True(t, tracked.HasEscalated())
+	})
+}
+
+// TestPDIncidentNotifier_AttachToBuilder_SharesEscalationState is a wiring
+// invariant test: everything this fix depends on requires that the client
+// handed to investigations via AttachToBuilder is the *same* trackingPDClient
+// instance the notifier and executor use. If AttachToBuilder is ever changed
+// to hand out a different or unwrapped client, an escalation made by an
+// investigation would go unnoticed by the rest of the pipeline, and this
+// test fails.
+func TestPDIncidentNotifier_AttachToBuilder_SharesEscalationState(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockPD := pdmock.NewMockClient(ctrl)
+	mockPD.EXPECT().EscalateIncident().Return(nil).Times(1)
+
+	tracked := newTrackingPDClient(mockPD)
+	notifier := newPDIncidentNotifier(tracked)
+
+	builder := &investigation.ResourceBuilderMock{Resources: &investigation.Resources{}}
+	notifier.AttachToBuilder(builder)
+
+	// Simulate an investigation escalating through the client it was handed
+	// via Resources.PdClient - exactly what aiassisted.Run does.
+	require.NoError(t, builder.Resources.PdClient.EscalateIncident())
+
+	assert.True(t, tracked.HasEscalated())
 }
